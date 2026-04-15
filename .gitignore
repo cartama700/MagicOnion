@@ -1,0 +1,80 @@
+# ---- .NET ----
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userprefs
+*.dbmdl
+*.jfm
+*.pidb
+*.svclog
+*.scc
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+build/
+bld/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!packages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Rider / Visual Studio / VS Code
+.vs/
+.vscode/
+.idea/
+*.swp
+*.sln.iml
+*.DotSettings.user
+
+# Test / coverage
+TestResults/
+[Cc]overage*/
+coverage.*.xml
+*.coverage
+*.coveragexml
+BenchmarkDotNet.Artifacts/
+
+# Publish
+publish/
+PublishProfiles/
+*.pubxml
+*.pubxml.user
+*.publishsettings
+
+# Secrets / env
+*.pfx
+*.snk
+secrets.json
+appsettings.*.Local.json
+.env
+.env.*
+!.env.example
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---- Node (wwwroot tooling, 추후 필요 시) ----
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
