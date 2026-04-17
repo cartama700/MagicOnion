@@ -1,0 +1,15 @@
+**/bin
+**/obj
+**/.vs
+**/.vscode
+**/.idea
+**/*.user
+.git
+.gitignore
+docs
+k8s
+*.md
+docker-compose.yml
+.github
+Tests
+Benchmarks

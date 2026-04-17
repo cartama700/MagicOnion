@@ -1,0 +1,19 @@
+# 부하 주입용 일회성 Job. 스케일은 args[0] 의 봇 수로 조정.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bots-load
+  namespace: aiming-poc
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bots
+          image: REGISTRY/aiming-bots:latest   # ← 빌드 후 태그 교체
+          args: ["1000", "http://server:5001", "100", "4"]
+          resources:
+            requests: { cpu: "200m", memory: "256Mi" }
+            limits:   { cpu: "2",    memory: "1Gi" }

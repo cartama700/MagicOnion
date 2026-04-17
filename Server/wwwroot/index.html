@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Aiming PoC — Sync Server Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0b0f17; --panel:#111827; --line:#1f2937; --line2:#374151;
+    --fg:#e6edf3; --muted:#94a3b8; --accent:#34d399; --warn:#f59e0b; --danger:#ef4444;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family:ui-monospace,Consolas,Menlo,monospace; }
+  header {
+    padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  }
+  header b { font-size:15px; }
+  header .muted { color:var(--muted); font-size:12px; }
+  header .spacer { flex:1; }
+  header label { font-size:12px; color:var(--muted); }
+  select, button {
+    background:#1f2937; color:var(--fg); border:1px solid var(--line2);
+    padding:7px 12px; border-radius:6px; font-family:inherit; font-size:12px; cursor:pointer;
+  }
+  button.on  { background:#065f46; border-color:#10b981; }
+  button.off { background:#7f1d1d; border-color:#ef4444; }
+  main {
+    display:grid; grid-template-columns: minmax(0, 1fr) 340px; gap:12px; padding:12px;
+  }
+  .left  { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .right { display:flex; flex-direction:column; gap:12px; }
+  .panel {
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:12px;
+  }
+  .panel h3 { margin:0 0 8px; font-size:12px; color:var(--muted);
+              text-transform:uppercase; letter-spacing:1px; font-weight:600; }
+  .canvas-wrap { position:relative; aspect-ratio: 1200/720; background:#000;
+                 border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .canvas-wrap canvas { position:absolute; inset:0; width:100%; height:100%; }
+  .stat { display:flex; justify-content:space-between; padding:6px 0;
+          border-bottom:1px dashed var(--line); font-size:13px; }
+  .stat:last-child { border-bottom:0; }
+  .stat b { color:var(--accent); }
+  .hint { font-size:11px; color:var(--muted); margin:8px 0 0; line-height:1.5; }
+  .legend { display:flex; gap:10px; font-size:11px; color:var(--muted); }
+  .legend span::before { content:'■'; color:var(--accent); margin-right:4px; }
+  .legend .heat::before { color:var(--warn); }
+  .chart-box { height:140px; }
+  .kpi-grid { display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; }
+  .kpi-card { background:#0b1220; border:1px solid var(--line); border-radius:6px; padding:8px 10px; }
+  .kpi-card .label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
+  .kpi-card .value { font-size:18px; color:var(--accent); font-weight:600; margin-top:2px; }
+  .lb-row { display:grid; grid-template-columns: 28px 1fr auto; gap:8px; padding:4px 0;
+            border-bottom:1px dashed var(--line); font-size:12px; align-items:baseline; }
+  .lb-row:last-child { border-bottom:0; }
+  .lb-rank { color:var(--muted); text-align:right; }
+  .lb-score { color:var(--warn); font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <b>Aiming PoC</b>
+  <span class="muted">MagicOnion Sync Server · .NET 10 · Phase 4</span>
+  <span class="spacer"></span>
+  <label>Room</label>
+  <select id="room"><option value="world">world</option></select>
+  <label>View</label>
+  <select id="view">
+    <option value="dots">Dots</option>
+    <option value="heat">Heatmap</option>
+  </select>
+  <label>Zero-Alloc</label>
+  <button id="toggle" class="off" onclick="toggleOpt()">OFF</button>
+</header>
+<main>
+  <div class="left">
+    <div class="panel">
+      <h3>Live Radar</h3>
+      <div class="canvas-wrap">
+        <canvas id="heat" width="1200" height="720"></canvas>
+        <canvas id="radar" width="1200" height="720"></canvas>
+      </div>
+      <div class="legend" style="margin-top:8px;">
+        <span>접속 좌표(점)</span>
+        <span class="heat">이동 밀집도(잔상)</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Time Series</h3>
+      <div class="chart-box"><canvas id="cTps"></canvas></div>
+      <div class="chart-box"><canvas id="cAlloc"></canvas></div>
+      <div class="chart-box"><canvas id="cGen0"></canvas></div>
+      <div class="chart-box"><canvas id="cP99"></canvas></div>
+    </div>
+  </div>
+  <div class="right">
+    <div class="panel">
+      <h3>Live Metrics</h3>
+      <div class="stat"><span>Connected Players</span><b id="players">0</b></div>
+      <div class="stat"><span>Packets / sec</span><b id="tps">0</b></div>
+      <div class="stat"><span>Avg AOI hits</span><b id="aoi">0</b></div>
+      <div class="stat"><span>GC Allocated (MB)</span><b id="alloc">0</b></div>
+      <div class="stat"><span>Gen0 / 1 / 2</span><b id="gen">0 / 0 / 0</b></div>
+      <div class="stat"><span>Snapshot points</span><b id="snap">0</b></div>
+      <p class="hint">
+        <b>OFF</b>: LINQ 기반 AOI 필터 — Gen0 / Allocated 가 가파르게 상승.<br>
+        <b>ON</b>: ArrayPool + 수동 루프 — TPS 유지, 할당 평행선.
+      </p>
+    </div>
+    <div class="panel">
+      <h3>KPI Rollup</h3>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="label">Peak Players</div><div class="value" id="kPeakP">0</div></div>
+        <div class="kpi-card"><div class="label">Peak TPS</div><div class="value" id="kPeakT">0</div></div>
+        <div class="kpi-card"><div class="label">Avg TPS</div><div class="value" id="kAvgT">0</div></div>
+        <div class="kpi-card"><div class="label">Samples</div><div class="value" id="kSamp">0</div></div>
+        <div class="kpi-card"><div class="label">P50 Latency</div><div class="value" id="kP50">0ms</div></div>
+        <div class="kpi-card"><div class="label">P99 Latency</div><div class="value" id="kP99">0ms</div></div>
+      </div>
+      <p class="hint" style="margin:8px 0 0;">
+        BackgroundService <code>KpiRollupJob</code> 1초 주기 집계 → <code>/api/kpi</code>
+      </p>
+    </div>
+    <div class="panel">
+      <h3>Top 10 (선택 룸)</h3>
+      <div id="leaderboard"></div>
+      <p class="hint" style="margin:8px 0 0;">
+        실시간: <code>/api/leaderboard</code> (Redis ZRANGE 또는 in-mem 폴백)<br>
+        15초 스냅샷: <code>/api/ranking</code> (RankingSnapshotJob)
+      </p>
+    </div>
+    <div class="panel">
+      <h3>Rooms</h3>
+      <div id="roomList" style="font-size:12px; line-height:1.7;"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const players = new Map();
+  const radarCv = document.getElementById('radar');
+  const heatCv  = document.getElementById('heat');
+  const radar   = radarCv.getContext('2d');
+  const heat    = heatCv.getContext('2d');
+  const toggleBtn = document.getElementById('toggle');
+  const roomSel   = document.getElementById('room');
+  const viewSel   = document.getElementById('view');
+
+  // ---- Chart.js setup ----
+  const baseOpts = (color, label, fmt) => ({
+    type: 'line',
+    data: { labels: [], datasets: [{
+      label, data: [], borderColor: color, backgroundColor: color + '33',
+      borderWidth: 1.5, pointRadius: 0, tension: 0.25, fill: true,
+    }]},
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{ labels:{ color:'#94a3b8', font:{ size:11 } } } },
+      scales:{
+        x:{ ticks:{ color:'#475569', font:{ size:9 }, maxTicksLimit:6 }, grid:{ color:'#1f2937' } },
+        y:{ ticks:{ color:'#94a3b8', font:{ size:10 }, callback: fmt }, grid:{ color:'#1f2937' } },
+      }
+    }
+  });
+  const chartTps   = new Chart(document.getElementById('cTps'),   baseOpts('#34d399','Packets / sec', v=>v));
+  const chartAlloc = new Chart(document.getElementById('cAlloc'), baseOpts('#f59e0b','Allocated (MB)', v=>v.toFixed(0)));
+  const chartGen0  = new Chart(document.getElementById('cGen0'),  baseOpts('#ef4444','Gen0 collections', v=>v));
+  const chartP99   = new Chart(document.getElementById('cP99'),   baseOpts('#a78bfa','P99 Latency (ms)', v=>v));
+  const MAX_POINTS = 60;
+  function pushPoint(chart, label, value) {
+    chart.data.labels.push(label);
+    chart.data.datasets[0].data.push(value);
+    if (chart.data.labels.length > MAX_POINTS) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update('none');
+  }
+
+  // ---- Polling ----
+  async function pollMetrics() {
+    try {
+      const m = await (await fetch('/api/metrics')).json();
+      document.getElementById('players').textContent = m.players;
+      document.getElementById('tps').textContent     = m.packets;
+      document.getElementById('aoi').textContent     = m.avgAoi.toFixed(1);
+      document.getElementById('alloc').textContent   = (m.gcAllocatedBytes / 1048576).toFixed(1);
+      document.getElementById('gen').textContent     = `${m.gen0} / ${m.gen1} / ${m.gen2}`;
+      setToggle(m.optimized);
+
+      const t = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+      pushPoint(chartTps,   t, m.packets);
+      pushPoint(chartAlloc, t, m.gcAllocatedBytes / 1048576);
+      pushPoint(chartGen0,  t, m.gen0);
+    } catch {}
+  }
+
+  async function pollRooms() {
+    try {
+      const rooms = await (await fetch('/api/rooms')).json();
+      const cur = roomSel.value;
+      // refresh dropdown
+      const names = rooms.map(r => r.room);
+      if (names.length === 0) names.push('world');
+      const have = Array.from(roomSel.options).map(o => o.value).join('|');
+      const want = names.join('|');
+      if (have !== want) {
+        roomSel.innerHTML = names.map(n =>
+          `<option value="${n}"${n===cur?' selected':''}>${n}</option>`).join('');
+      }
+      // sidebar list
+      document.getElementById('roomList').innerHTML = rooms.length
+        ? rooms.map(r => `<div>${r.room} <span style="color:#94a3b8">— ${r.count}p</span></div>`).join('')
+        : '<span style="color:#94a3b8">no rooms</span>';
+    } catch {}
+  }
+
+  async function pollSnapshot() {
+    try {
+      const s = await (await fetch('/api/snapshot?room=' + encodeURIComponent(roomSel.value))).json();
+      const flat = s.p;
+      players.clear();
+      for (let i = 0; i < flat.length; i += 3) {
+        players.set(flat[i], { x: flat[i + 1], y: flat[i + 2] });
+      }
+      document.getElementById('snap').textContent = players.size;
+    } catch {}
+  }
+
+  // ---- Toggle ----
+  function setToggle(on) {
+    toggleBtn.textContent = on ? 'ON' : 'OFF';
+    toggleBtn.className   = on ? 'on' : 'off';
+  }
+  async function toggleOpt() {
+    const next = toggleBtn.className !== 'on';
+    try {
+      const r = await fetch(`/api/optimize?on=${next}`, { method:'POST' });
+      const j = await r.json();
+      setToggle(j.optimized);
+    } catch {}
+  }
+
+  // ---- Render loop ----
+  function draw() {
+    const showHeat = viewSel.value === 'heat';
+
+    if (showHeat) {
+      // fade trail
+      heat.fillStyle = 'rgba(0,0,0,0.04)';
+      heat.fillRect(0, 0, 1200, 720);
+      heat.globalCompositeOperation = 'lighter';
+      heat.fillStyle = 'rgba(245,158,11,0.18)';
+      for (const p of players.values()) {
+        heat.beginPath();
+        heat.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        heat.fill();
+      }
+      heat.globalCompositeOperation = 'source-over';
+
+      radar.clearRect(0, 0, 1200, 720);
+    } else {
+      // black wipe + dots
+      heat.fillStyle = '#000';
+      heat.fillRect(0, 0, 1200, 720);
+      radar.clearRect(0, 0, 1200, 720);
+      radar.fillStyle = '#34d399';
+      for (const p of players.values()) radar.fillRect(p.x, p.y, 2, 2);
+    }
+    requestAnimationFrame(draw);
+  }
+
+  // ---- Boot ----
+  async function pollKpi() {
+    try {
+      const k = await (await fetch('/api/kpi')).json();
+      document.getElementById('kPeakP').textContent = k.peakPlayers;
+      document.getElementById('kPeakT').textContent = k.peakPacketsPerSec;
+      document.getElementById('kAvgT').textContent  = k.avgPacketsPerSec.toFixed(0);
+      document.getElementById('kSamp').textContent  = k.samples;
+      document.getElementById('kP50').textContent   = k.p50Ms + 'ms';
+      document.getElementById('kP99').textContent   = k.p99Ms + 'ms';
+      const t = new Date().toLocaleTimeString('ko-KR', { hour12:false });
+      pushPoint(chartP99, t, k.p99Ms);
+    } catch {}
+  }
+
+  async function pollLeaderboard() {
+    try {
+      const r = await (await fetch('/api/leaderboard?room=' + encodeURIComponent(roomSel.value) + '&n=10')).json();
+      const el = document.getElementById('leaderboard');
+      if (!r.top.length) { el.innerHTML = '<div style="color:#94a3b8;font-size:12px">no scores yet</div>'; return; }
+      el.innerHTML = r.top.map((t, i) =>
+        `<div class="lb-row">
+           <span class="lb-rank">#${i+1}</span>
+           <span>player ${t.playerId}</span>
+           <span class="lb-score">${t.score.toFixed(0)}</span>
+         </div>`).join('');
+    } catch {}
+  }
+
+  setInterval(pollMetrics, 1000);
+  setInterval(pollSnapshot, 150);
+  setInterval(pollRooms, 2000);
+  setInterval(pollKpi, 2000);
+  setInterval(pollLeaderboard, 2000);
+  pollRooms();
+  draw();
+</script>
+</body>
+</html>

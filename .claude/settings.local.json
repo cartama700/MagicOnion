@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --version)",
+      "Bash(dotnet new *)",
+      "Bash(dotnet sln *)",
+      "Bash(dotnet add *)",
+      "Bash(dotnet build *)",
+      "Bash(ls /Users/kimsehoon/works/MagicOnion/*.sln*)",
+      "Bash(git rm *)",
+      "Bash(git -C /Users/kimsehoon/works/MagicOnion remote -v)",
+      "Bash(dotnet run *)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/api/metrics)",
+      "Bash(curl -s http://localhost:5000/api/snapshot -o /tmp/snap.json -w 'HTTP %{http_code}\\\\n')",
+      "Read(//tmp/**)",
+      "Bash(lsof -nP -iTCP:5000 -sTCP:LISTEN)",
+      "Bash(curl -fsS http://localhost:5050/api/metrics)",
+      "Bash(curl -fsS http://localhost:5050/api/snapshot)",
+      "Bash(curl -fsS -X POST 'http://localhost:5050/api/optimize?on=true')",
+      "Bash(curl -fsS http://localhost:5050/api/rooms)",
+      "Bash(curl -fsS 'http://localhost:5050/api/snapshot?room=room-01')",
+      "WebFetch(domain:hrmos.co)",
+      "Bash(dotnet test *)",
+      "Bash(docker --version)",
+      "Bash(curl -fsS http://localhost:5050/api/kpi)",
+      "Bash(curl -fsS 'http://localhost:5050/api/leaderboard?room=room-00&n=5')",
+      "Bash(curl -fsS 'http://localhost:5050/api/ranking?room=room-00')",
+      "Bash(curl -fsS \"https://api.nuget.org/v3-flatcontainer/magiconion.server.redis/index.json\")",
+      "Bash(curl -fsS \"https://api.nuget.org/v3-flatcontainer/magiconion.server.groupprovider.redis/index.json\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\([v for v in d['versions'] if v.startswith\\('7'\\)]\\)\")",
+      "Bash(dotnet restore *)",
+      "Bash(grep -v '^[A-Za-z0-9]*$')",
+      "Bash(grep -E \"^[A-Z][a-zA-Z]+$\")",
+      "Bash(grep -E \"^[a-z_A-Z]{2,40}$\")",
+      "Bash(dotnet ildasm *)",
+      "Bash(curl -fsS http://localhost:5050/health/ready)",
+      "Bash(curl -fsS http://localhost:5050/api/profile/42)",
+      "Bash(curl -fsS -X POST http://localhost:5050/api/gacha/77)",
+      "Bash(curl -fsS http://localhost:5050/api/mail/77)"
+    ]
+  }
+}

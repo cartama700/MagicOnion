@@ -1,0 +1,97 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: aiming-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: aiming
+      MYSQL_USER: aiming
+      MYSQL_PASSWORD: aiming
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: aiming-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: .
+      dockerfile: Server/Dockerfile
+    container_name: aiming-server
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Mysql: "Server=mysql;Port=3306;Database=aiming;Uid=aiming;Pwd=aiming;"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__RedisBackplane: "redis:6379"
+      DOTNET_gcServer: "1"
+    ports:
+      - "5050:5050"   # dashboard / REST
+      - "5001:5001"   # MagicOnion gRPC
+
+  # Phase 10 — Scale-Out 시연용 두 번째 인스턴스. 같은 Redis backplane 공유.
+  server2:
+    build:
+      context: .
+      dockerfile: Server/Dockerfile
+    container_name: aiming-server2
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Mysql: "Server=mysql;Port=3306;Database=aiming;Uid=aiming;Pwd=aiming;"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__RedisBackplane: "redis:6379"
+      DOTNET_gcServer: "1"
+    ports:
+      - "5060:5050"   # 두 번째 대시보드
+      - "5002:5001"   # 두 번째 gRPC
+    profiles: ["scale"]  # docker compose --profile scale up
+
+  bots:
+    build:
+      context: .
+      dockerfile: BotClients/Dockerfile
+    container_name: aiming-bots
+    depends_on:
+      - server
+    # 1000 봇, 100ms 틱, 4룸, even 시나리오 — 기본값
+    command: ["1000", "http://server:5001", "100", "4", "even"]
+    profiles: ["load"]   # docker compose --profile load up
+
+  # Phase 10 + 12 — Scale-Out + Cluster 시나리오 결합 시연
+  bots-scale:
+    build:
+      context: .
+      dockerfile: BotClients/Dockerfile
+    depends_on:
+      - server
+      - server2
+    # 두 서버에 bot 을 라운드 로빈 분산 (roomId 로 묶이면 backplane 이 동기화)
+    command: ["1000", "http://server:5001,http://server2:5001", "100", "4", "cluster"]
+    profiles: ["scale"]
+
+volumes:
+  mysql-data:
