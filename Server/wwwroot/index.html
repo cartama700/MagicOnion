@@ -95,6 +95,36 @@
       <div class="chart-box"><canvas id="cGen0"></canvas></div>
       <div class="chart-box"><canvas id="cP99"></canvas></div>
     </div>
+    <div class="panel" id="aiPanel">
+      <h3 style="display:flex; align-items:center; gap:8px;">
+        <span>AI Ops Assistant</span>
+        <span id="aiProviderBadge"
+              style="background:#374151; border:1px solid #4b5563; color:var(--fg);
+                     font-size:10px; padding:2px 8px; border-radius:10px;
+                     letter-spacing:1px; text-transform:none; font-weight:600;">…</span>
+      </h3>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <button id="aiSpikeBtn">Analyze P99 Spike</button>
+        <label style="font-size:11px; color:var(--muted);">window</label>
+        <select id="aiMinutes">
+          <option value="3">3m</option>
+          <option value="5" selected>5m</option>
+          <option value="10">10m</option>
+        </select>
+        <button id="aiStopBtn" disabled style="opacity:0.6;">Stop</button>
+      </div>
+      <div id="aiOutput" style="
+           font-family:inherit; font-size:12px; line-height:1.6;
+           min-height:120px; max-height:280px; overflow-y:auto;
+           background:#0b1220; border:1px solid var(--line); border-radius:6px;
+           padding:10px; white-space:pre-wrap; color:var(--fg);">
+        <span style="color:var(--muted);">대기 중 — Analyze 버튼을 눌러 최근 N분 텔레메트리 기반 P99 스파이크 분석을 요청하세요. Provider 는 우측 배지에 표시됩니다 (Mock 모드는 네트워크 없이 시연 안전).</span>
+      </div>
+      <p class="hint" style="margin:8px 0 0;">
+        Phase 16 · <code>GET /api/ops/analyze/spike</code> (Server-Sent Events 스트리밍) ·
+        프로바이더는 <code>appsettings.json</code> <code>Llm:Provider</code> 에서 <code>mock</code>/<code>openai</code> 전환
+      </p>
+    </div>
   </div>
   <div class="right">
     <div class="panel">
@@ -102,12 +132,16 @@
       <div class="stat"><span>Connected Players</span><b id="players">0</b></div>
       <div class="stat"><span>Packets / sec</span><b id="tps">0</b></div>
       <div class="stat"><span>Avg AOI hits</span><b id="aoi">0</b></div>
-      <div class="stat"><span>GC Allocated (MB)</span><b id="alloc">0</b></div>
-      <div class="stat"><span>Gen0 / 1 / 2</span><b id="gen">0 / 0 / 0</b></div>
-      <div class="stat"><span>Snapshot points</span><b id="snap">0</b></div>
+      <div class="stat" style="border-bottom:1px solid var(--line2);"><span>Snapshot points</span><b id="snap">0</b></div>
+      <div class="stat"><span>Alloc (MB / sec) <span style="color:var(--warn);font-size:10px;">★</span></span><b id="allocRate">0</b></div>
+      <div class="stat"><span>Gen0 / sec <span style="color:var(--warn);font-size:10px;">★</span></span><b id="gen0Rate">0</b></div>
+      <div class="stat"><span>Gen1 / sec <span style="color:var(--warn);font-size:10px;">★</span></span><b id="gen1Rate">0</b></div>
+      <div class="stat" style="opacity:0.6;"><span>GC Allocated (MB, 누적)</span><b id="alloc">0</b></div>
+      <div class="stat" style="opacity:0.6;"><span>Gen0 / 1 / 2 (누적)</span><b id="gen">0 / 0 / 0</b></div>
       <p class="hint">
-        <b>OFF</b>: LINQ 기반 AOI 필터 — Gen0 / Allocated 가 가파르게 상승.<br>
-        <b>ON</b>: ArrayPool + 수동 루프 — TPS 유지, 할당 평행선.
+        <span style="color:var(--warn);">★</span> 토글 즉시 반응하는 <b>속도(rate)</b> 지표 — 누적값과 다르게 ON ↔ OFF 차이가 바로 보임.<br>
+        <b>OFF</b>: LINQ 기반 AOI 필터 — Alloc/sec, Gen0/sec 급증.<br>
+        <b>ON</b>: ArrayPool + 수동 루프 — Alloc/sec ≈ 0, Gen0/sec ≈ 0.
       </p>
     </div>
     <div class="panel">
@@ -166,8 +200,8 @@
     }
   });
   const chartTps   = new Chart(document.getElementById('cTps'),   baseOpts('#34d399','Packets / sec', v=>v));
-  const chartAlloc = new Chart(document.getElementById('cAlloc'), baseOpts('#f59e0b','Allocated (MB)', v=>v.toFixed(0)));
-  const chartGen0  = new Chart(document.getElementById('cGen0'),  baseOpts('#ef4444','Gen0 collections', v=>v));
+  const chartAlloc = new Chart(document.getElementById('cAlloc'), baseOpts('#f59e0b','Alloc (MB / sec)', v=>v.toFixed(1)));
+  const chartGen0  = new Chart(document.getElementById('cGen0'),  baseOpts('#ef4444','Gen0 / sec', v=>v));
   const chartP99   = new Chart(document.getElementById('cP99'),   baseOpts('#a78bfa','P99 Latency (ms)', v=>v));
   const MAX_POINTS = 60;
   function pushPoint(chart, label, value) {
@@ -187,14 +221,17 @@
       document.getElementById('players').textContent = m.players;
       document.getElementById('tps').textContent     = m.packets;
       document.getElementById('aoi').textContent     = m.avgAoi.toFixed(1);
-      document.getElementById('alloc').textContent   = (m.gcAllocatedBytes / 1048576).toFixed(1);
-      document.getElementById('gen').textContent     = `${m.gen0} / ${m.gen1} / ${m.gen2}`;
+      document.getElementById('alloc').textContent     = (m.gcAllocatedBytes / 1048576).toFixed(1);
+      document.getElementById('gen').textContent       = `${m.gen0} / ${m.gen1} / ${m.gen2}`;
+      document.getElementById('allocRate').textContent = (m.allocMbPerSec ?? 0).toFixed(1);
+      document.getElementById('gen0Rate').textContent  = m.gen0PerSec ?? 0;
+      document.getElementById('gen1Rate').textContent  = m.gen1PerSec ?? 0;
       setToggle(m.optimized);
 
       const t = new Date().toLocaleTimeString('ko-KR', { hour12:false });
       pushPoint(chartTps,   t, m.packets);
-      pushPoint(chartAlloc, t, m.gcAllocatedBytes / 1048576);
-      pushPoint(chartGen0,  t, m.gen0);
+      pushPoint(chartAlloc, t, m.allocMbPerSec ?? 0);   // rate 기반 — 토글 즉시 그래프 곡선이 꺾임
+      pushPoint(chartGen0,  t, m.gen0PerSec ?? 0);
     } catch {}
   }
 
@@ -301,6 +338,64 @@
          </div>`).join('');
     } catch {}
   }
+
+  // ---- AI Ops Assistant (Phase 16) ----
+  const aiBtn    = document.getElementById('aiSpikeBtn');
+  const aiStopEl = document.getElementById('aiStopBtn');
+  const aiMinSel = document.getElementById('aiMinutes');
+  const aiOutput = document.getElementById('aiOutput');
+  const aiBadge  = document.getElementById('aiProviderBadge');
+  let aiSource = null;
+
+  (async () => {
+    try {
+      const r = await (await fetch('/api/ops/provider')).json();
+      const isMock = r.provider === 'mock';
+      aiBadge.textContent       = r.provider.toUpperCase();
+      aiBadge.style.background  = isMock ? '#7f1d1d' : '#065f46';
+      aiBadge.style.borderColor = isMock ? '#ef4444' : '#10b981';
+      aiBadge.title = isMock
+        ? 'Mock Provider — 네트워크/과금 없이 시연 가능한 안전 모드'
+        : `${r.provider} Provider — 실 LLM 호출`;
+    } catch {
+      aiBadge.textContent = 'ERR';
+    }
+  })();
+
+  function aiReset() {
+    if (aiSource) { aiSource.close(); aiSource = null; }
+    aiBtn.disabled = false;
+    aiStopEl.disabled = true;
+    aiStopEl.style.opacity = '0.6';
+  }
+  aiBtn.addEventListener('click', () => {
+    if (aiSource) aiSource.close();
+    aiOutput.textContent = '';
+    aiBtn.disabled = true;
+    aiStopEl.disabled = false;
+    aiStopEl.style.opacity = '1';
+    const minutes = aiMinSel.value;
+    aiSource = new EventSource(`/api/ops/analyze/spike?minutes=${minutes}`);
+    aiSource.onmessage = (ev) => {
+      aiOutput.textContent += ev.data.replace(/\\n/g, '\n');
+      aiOutput.scrollTop = aiOutput.scrollHeight;
+    };
+    aiSource.addEventListener('done', () => {
+      aiOutput.textContent += '\n\n[분석 완료]';
+      aiOutput.scrollTop = aiOutput.scrollHeight;
+      aiReset();
+    });
+    aiSource.addEventListener('error', (ev) => {
+      if (ev && ev.data) aiOutput.textContent += `\n[서버 오류] ${ev.data}`;
+    });
+    aiSource.onerror = () => {
+      if (aiSource && aiSource.readyState === EventSource.CLOSED) aiReset();
+    };
+  });
+  aiStopEl.addEventListener('click', () => {
+    aiOutput.textContent += '\n\n[중지됨]';
+    aiReset();
+  });
 
   setInterval(pollMetrics, 1000);
   setInterval(pollSnapshot, 150);

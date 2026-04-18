@@ -12,6 +12,9 @@ public sealed class KpiSnapshot
     private int _lastP95Ms;
     private int _lastP99Ms;
     private double _lastAvgLatencyMs;
+    private double _lastAllocRateMb;     // MB/sec 할당 속도 (직전 1초 구간)
+    private long _lastGen0PerSec;
+    private long _lastGen1PerSec;
 
     public DateTime LastUpdatedUtc { get; private set; } = DateTime.UtcNow;
 
@@ -25,6 +28,9 @@ public sealed class KpiSnapshot
     public int LastP95Ms => Volatile.Read(ref _lastP95Ms);
     public int LastP99Ms => Volatile.Read(ref _lastP99Ms);
     public double LastAvgLatencyMs => Volatile.Read(ref _lastAvgLatencyMs);
+    public double LastAllocRateMb => Volatile.Read(ref _lastAllocRateMb);
+    public long LastGen0PerSec => Interlocked.Read(ref _lastGen0PerSec);
+    public long LastGen1PerSec => Interlocked.Read(ref _lastGen1PerSec);
 
     public double AvgPacketsPerSec
     {
@@ -33,6 +39,13 @@ public sealed class KpiSnapshot
             var s = TotalSamples;
             return s == 0 ? 0 : (double)TotalPackets / s;
         }
+    }
+
+    public void RecordGc(double allocRateMb, long gen0PerSec, long gen1PerSec)
+    {
+        Volatile.Write(ref _lastAllocRateMb, allocRateMb);
+        Interlocked.Exchange(ref _lastGen0PerSec, gen0PerSec);
+        Interlocked.Exchange(ref _lastGen1PerSec, gen1PerSec);
     }
 
     public void Record(long players, long packetsLastSecond, double avgAoi,

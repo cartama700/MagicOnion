@@ -280,7 +280,7 @@ Server/
 
 ## 4-D. 외부 피드백 반영 — 에이밍 맞춤형 보강 로드맵
 
-> 라이브 서비스/대규모 분산 환경 관점의 외부 리뷰에서 나온 **6가지 보강 포인트**.
+> 라이브 서비스/대규모 분산 환경 관점의 외부 리뷰 + 자체 제안으로 나온 **7가지 보강 포인트**.
 > 에이밍의 실제 라이브 게임 운영 톤(Stateful 서버, GKE, NewSQL, 라이브 핫픽스)에 맞춰
 > 기존 Phase 6–9 위에 얹는 **"맞춤형 양념" 페이즈**.
 
@@ -350,17 +350,74 @@ Server/
 - [x] 스모크: 로컬 루프백 40 봇 기준 `p50=1ms, p99=2ms` 정상 측정
 - [x] 어필: *"GC 최적화의 진짜 KPI 는 Allocated bytes 가 아니라 P99 latency"*
 
+### Phase 16 — AI 운영 보조자 (LLM Ops Assistant) (예정)
+> *"알람은 P99 가 튀었다고만 알려준다. **왜** 튀었는지는 온콜이 로그를 뒤져야 한다."*
+
+게임 서버의 **온콜/운영 페인**을 LLM 으로 축약. 포폴에 이미 존재하는 텔레메트리
+(`KpiRollupJob`, `LatencyHistogram`, `MatchRecord`, GC 메트릭) 를 그대로 AI 입력으로 재활용한다.
+**새로운 데이터 수집이 아니라 기존 관측 데이터의 해석 레이어**라는 게 핵심.
+
+- [ ] **LLM Provider Registry 추상화** (본업 Personia 프로덕션 패턴 이식)
+  - `Server/Services/Llm/ILlmProvider.cs` — `IAsyncEnumerable<string> StreamAsync(systemPrompt, userPrompt, ct)`
+  - `Server/Services/Llm/MockProvider.cs` — 결정적 모의 응답. **면접 데모 시 네트워크/과금 실패 대비 안전장치**
+  - `Server/Services/Llm/OpenAiProvider.cs` — Chat Completions 스트리밍 (API 키 선택)
+  - `appsettings.json` 의 `Llm:Provider` 로 런타임 선택 (`mock` / `openai`), `Llm:ApiKey` / `Llm:Model`
+  - 확장 포인트: `ClaudeProvider` / `GeminiProvider` 도 같은 인터페이스로 추가 가능
+
+- [ ] **① P99 스파이크 분석기** — *"14:23 에 왜 튀었나?"*
+  - 입력 컨텍스트: 최근 N 분 `KpiSnapshot` (peak/avg/P50/P95/P99), `LatencyHistogram` 버킷 분포, GC Gen0/Allocated 델타, Zero-Alloc 토글 상태, 접속자/TPS 추이
+  - `Server/Services/Ops/SpikeAnalyzer.cs` — 텔레메트리 → 구조화된 프롬프트 변환 (분석 대상 시계열을 문자열 차트로 직렬화)
+  - `POST /api/ops/analyze/spike?minutes=5` → LLM 스트리밍 응답 (SSE 또는 chunked)
+
+- [ ] **② 어뷰징/치팅 패턴 탐지** — *"이 세션은 사람 맞나?"*
+  - 입력: `match_record` 최근 N 건 `(match_id, player_id, room_id, joined_at, left_at, score, score_per_sec)`
+  - 탐지 축: 비정상 `score / duration` 비율, 초단시간 재접속 루프, 같은 룸 내 동일 점수 스파이크
+  - `Server/Services/Ops/AbuseAnalyzer.cs` — 통계 사전 필터링(상위 N% 이상치) 후 LLM 에 "의심도 + 설명" 질의
+  - `POST /api/ops/analyze/abuse?hours=1` → 의심 플레이어 + 근거 리스트
+
+- [ ] **③ Shutdown Drain 요약** — *"정상 드레인 중인가, 스턱인가?"*
+  - 입력: `ConnectedPlayers`, `MatchWriteQueue.PendingCount`, 경과 시간, `/health/ready` 상태
+  - `GET /api/ops/analyze/drain` → *"15초 경과, 잔여 세션 3, 큐 잔량 12건, 정상 드레인 중 (예상 완료: 5s 내)"*
+  - SIGTERM 감지 시 대시보드 상단에 자동 배지
+
+- [ ] **스트리밍 채널** — 응답은 스트리밍 필수 (LLM 토큰 단위 지연)
+  - 1차: **Server-Sent Events** (`text/event-stream`) — 구현 단순, JS `EventSource` 로 수신
+  - 2차(선택): MagicOnion StreamingHub `IOpsHub.AnalyzeSpikeAsync` + `OnAnalysisChunk(string token)` — 본업의 SignalR TTSHub 경험을 게임 서버 맥락으로 이식
+
+- [ ] **대시보드 통합**
+  - P99 Latency 차트 상단에 **"🔍 Ask AI"** 버튼 — 클릭 시 최근 5분 스파이크 분석 스트리밍 출력 패널
+  - KPI 카드 영역에 **Drain Summary** 배지 — `/health/ready` 가 503 이 되면 자동 노출
+  - 관리자 메뉴에 **Abuse Report** 섹션 — 1시간 주기 수동 실행
+  - `Llm:Provider == mock` 일 때 배지 색상으로 시각 구분 (면접 데모 안전)
+
+- [ ] **비용/안전 가드레일**
+  - `Llm:MaxTokensPerRequest` / `Llm:MaxRequestsPerMinute` — RateLimit + 예산 방어
+  - **PII/시크릿 필터** — 프롬프트 진입 전 플레이어 ID 만 허용, 커넥션 문자열/토큰/이메일 차단
+  - `appsettings.Development.json` 기본 `Provider=mock` — 실수로 과금 발생 방지
+  - CI 테스트는 `MockProvider` 만 사용 (네트워크 격리)
+
+- [ ] **테스트**
+  - `MockProvider` 결정성 — 같은 입력 → 같은 출력 (스냅샷 기반)
+  - `SpikeAnalyzer` 프롬프트 직렬화 — 텔레메트리 → 문자열 변환 로직 단위 테스트
+  - `/api/ops/analyze/*` E2E — `WebApplicationFactory` + Mock Provider 로 네트워크 없이 전 경로 검증
+
+- [ ] **어필**:
+  *"게임 서버 운영의 **'알람 → 대시보드 → 로그 뒤짐'** 3단계를 AI 스트리밍 한 번으로 압축.
+  LLM Provider 추상화로 OpenAI 장애 시 로컬 모델/Mock 으로 failover 가능한 프로덕션 구조.
+  본업(Personia) 에서 운영 중인 멀티 프로바이더 라우팅 패턴을 게임 서버 관측성에 이식."*
+
 ### 4-D 우선순위 (외부 리뷰 반영, 4-B 우선순위 재배치)
 
 | 추천 순위 | Phase | 면접관 시선의 가치 |
 |---|---|---|
 | **1** | **Phase 10 (Redis Backplane Scale-Out)** | 단일 노드 최적화 → **분산 아키텍처** 능력으로 격상. 가장 강력한 차별화. |
 | **2** | **Phase 12 (악성 부하 시나리오)** | Phase 10 효과를 시각적으로 입증. "그래서 어떻게 버틴다고?" 의 답. |
-| **3** | **Phase 11 (UUID PK + Write-Behind)** | NewSQL 친화 설계 — Spanner/TiDB 도입 회사가 보고 싶어하는 정확한 그림. |
-| **4** | **Phase 15 (P99 Latency)** | Zero-Alloc 토글의 ROI 를 *유저 체감 지표*로 환산해 보여주는 마무리. |
-| **5** | **Phase 13 (Graceful Shutdown)** | Stateful 서버 + K8s 운영 이해도 시그널. |
-| **6** | **Phase 14 (하이브리드 API)** | 실 라이브 서비스 구조 이해도 시그널. |
-| 7 | Phase 8 (테스트) — 기존 4-B 1순위 | **이미 구현 완료**. 위 페이즈들의 안정망으로 후증명 역할. |
+| **3** | **Phase 16 (AI 운영 보조자)** | 타 포폴에 거의 없는 **독자 차별화**. 관측성 + LLM + 프로바이더 추상화가 한 화면에. |
+| **4** | **Phase 11 (UUID PK + Write-Behind)** | NewSQL 친화 설계 — Spanner/TiDB 도입 회사가 보고 싶어하는 정확한 그림. |
+| **5** | **Phase 15 (P99 Latency)** | Zero-Alloc 토글의 ROI 를 *유저 체감 지표*로 환산해 보여주는 마무리. |
+| **6** | **Phase 13 (Graceful Shutdown)** | Stateful 서버 + K8s 운영 이해도 시그널. |
+| **7** | **Phase 14 (하이브리드 API)** | 실 라이브 서비스 구조 이해도 시그널. |
+| 8 | Phase 8 (테스트) — 기존 4-B 1순위 | **이미 구현 완료**. 위 페이즈들의 안정망으로 후증명 역할. |
 
 > *"기존의 탄탄한 뼈대 위에 위 6가지 양념을 가미하면, 기술 과제를 넘어 '에이밍 백엔드 리드로 당장 투입 가능한 인재'로 평가받을 수 있다."* — 외부 리뷰
 

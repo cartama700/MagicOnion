@@ -5,6 +5,8 @@ using Server.Jobs;
 using Server.Lifecycle;
 using Server.Persistence;
 using Server.Services;
+using Server.Services.Llm;
+using Server.Services.Ops;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -27,7 +29,20 @@ builder.Services.AddHostedService<GracefulShutdownService>();
 builder.Services.AddSingleton<RankingSnapshotJob>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RankingSnapshotJob>());
 builder.Services.AddHostedService<KpiRollupJob>();
+builder.Services.AddHostedService<ConsoleStatus>();
 builder.Services.AddGrpc();
+
+// Phase 16 — LLM Provider Registry. 기본 Mock 이라 API 키 없어도 전 경로 동작.
+builder.Services.AddHttpClient();
+var llmOpt = new LlmOptions();
+builder.Configuration.GetSection("Llm").Bind(llmOpt);
+builder.Services.AddSingleton(llmOpt);
+builder.Services.AddSingleton<ILlmProvider>(sp => llmOpt.Provider?.ToLowerInvariant() switch
+{
+    "openai" => new OpenAiLlmProvider(sp.GetRequiredService<IHttpClientFactory>(), llmOpt),
+    _        => new MockLlmProvider(),
+});
+builder.Services.AddSingleton<SpikeAnalyzer>();
 
 var magicOnion = builder.Services.AddMagicOnion();
 var backplaneConn = builder.Configuration.GetConnectionString("RedisBackplane")
@@ -89,6 +104,10 @@ app.MapGet("/api/metrics", (MetricsService m, OptimizationMode o, KpiSnapshot k)
     gen0 = GC.CollectionCount(0),
     gen1 = GC.CollectionCount(1),
     gen2 = GC.CollectionCount(2),
+    // 토글 효과를 즉시 보여주는 rate 지표 (KpiRollupJob 1초 주기 델타 기반)
+    allocMbPerSec = k.LastAllocRateMb,
+    gen0PerSec = k.LastGen0PerSec,
+    gen1PerSec = k.LastGen1PerSec,
     optimized = o.IsOn,
 });
 
@@ -132,6 +151,9 @@ app.MapGet("/health/ready", (ReadinessGate g) =>
 
 // Phase 14 — Hybrid API (Stateless Minimal API endpoints)
 app.MapProfile();
+
+// Phase 16 — AI 운영 보조자 (SSE 스트리밍)
+app.MapOps();
 
 app.MapGet("/api/leaderboard", async (ILeaderboard lb, string? room, int? n) =>
 {

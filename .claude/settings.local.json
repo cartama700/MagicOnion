@@ -36,7 +36,13 @@
       "Bash(curl -fsS http://localhost:5050/health/ready)",
       "Bash(curl -fsS http://localhost:5050/api/profile/42)",
       "Bash(curl -fsS -X POST http://localhost:5050/api/gacha/77)",
-      "Bash(curl -fsS http://localhost:5050/api/mail/77)"
+      "Bash(curl -fsS http://localhost:5050/api/mail/77)",
+      "Bash(lsof -nP -iTCP:5001 -sTCP:LISTEN)",
+      "Bash(lsof -nP -iTCP -sTCP:LISTEN)",
+      "Bash(grep -r \"Zero-Alloc\\\\|Optimized\\\\|ArrayPool\" /Users/kimsehoon/works/MagicOnion --include=\"*.cs\" ! -path \"*/obj/*\")",
+      "Bash(lsof -ti:5050)",
+      "Bash(xargs -r kill -9)",
+      "Bash(lsof -ti:5001)"
     ]
   }
 }
